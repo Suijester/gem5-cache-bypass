@@ -85,6 +85,11 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
     IS, AccessPermission:Busy, desc="L2 idle, got L1_GET_INSTR or multiple L1_GETS, issued memory fetch, have not seen response yet";
     IM, AccessPermission:Busy, desc="L2 idle, got L1_GETX, issued memory fetch, have not seen response(s) yet";
 
+    // Bypass Transient States
+    ISS_B, AccessPermission:Busy, desc="L2 idle, got single L1_GETS, issued memory fetch, have not seen response yet";
+    IS_B, AccessPermission:Busy, desc="L2 idle, got L1_GET_INSTR or multiple L1_GETS, issued memory fetch, have not seen response yet";
+    IM_B, AccessPermission:Busy, desc="L2 idle, got L1_GETX, issued memory fetch, have not seen response(s) yet";
+
     // Blocking states
     SS_MB, AccessPermission:Busy, desc="Blocked for L1_GETX from SS";
     MT_MB, AccessPermission:Busy, desc="Blocked for L1_GETX from MT";
@@ -106,6 +111,11 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
     L1_GET_INSTR,            desc="a L1I GET INSTR request for a block maped to us";
     L1_GETS,                 desc="a L1D GETS request for a block maped to us";
     L1_GETX,                 desc="a L1D GETX request for a block maped to us";
+
+    L1_GET_INSTR_Bypass,     desc="L1_GET_INSTR, with streaming bypass";
+    L1_GETS_Bypass,          desc="L1_GETS, with streaming bypass";
+    L1_GETX_Bypass,          desc="L1_GETX, with streaming bypass";
+
     L1_UPGRADE,                 desc="a L1D GETX request for a block maped to us";
 
     L1_PUTX,                 desc="L1 replacing data";
@@ -421,8 +431,21 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
           trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.addr,
                                                 in_msg.Requestor, cache_entry),
                   in_msg.addr, cache_entry, tbe);
-        } else {
-          if (L2cache.cacheAvail(in_msg.addr)) {
+        } else { // BYPASS ENABLED
+          if (L2cache.shouldBypass(in_msg.addr)) {
+            if (in_msg.Type == CoherenceRequestType:GETS) {
+              trigger(Event:L1_GETS_Bypass, in_msg.addr, cache_entry, tbe);
+            } else if (in_msg.Type == CoherenceRequestType:GET_INSTR) {
+              trigger(Event:L1_GET_INSTR_Bypass, in_msg.addr, cache_entry, tbe);
+            } else if (in_msg.Type == CoherenceRequestType:GETX) {
+              trigger(Event:L1_GETX_Bypass, in_msg.addr, cache_entry, tbe);
+            } else {
+              // can't bypass the request
+              trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.addr,
+                                                  in_msg.Requestor, cache_entry),
+                    in_msg.addr, cache_entry, tbe);
+            }
+          } else if (L2cache.cacheAvail(in_msg.addr)) {
             // L2 does't have the line, but we have space for it in the L2
             trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.addr,
                                                   in_msg.Requestor, cache_entry),
@@ -576,6 +599,21 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
     }
   }
 
+  action(eb_sendDataToGetSRequestors, "eb", desc="Send data from cache to all GetS IDs with bypass") {
+    assert(is_valid(tbe));
+    assert(tbe.L1_GetS_IDs.count() > 0);
+    peek(responseL2Network_in, ResponseMsg) {
+      enqueue(responseL2Network_out, ResponseMsg, to_l1_latency) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:DATA;
+        out_msg.Sender := machineID;
+        out_msg.Destination := tbe.L1_GetS_IDs;  // internal nodes
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
+    }
+  }
+
   action(ex_sendExclusiveDataToGetSRequestors, "ex", desc="Send data from cache to all GetS IDs") {
     assert(is_valid(tbe));
     assert(tbe.L1_GetS_IDs.count() == 1);
@@ -587,6 +625,21 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
       out_msg.Destination := tbe.L1_GetS_IDs;  // internal nodes
       out_msg.DataBlk := cache_entry.DataBlk;
       out_msg.MessageSize := MessageSizeType:Response_Data;
+    }
+  }
+
+  action(exb_sendExclusiveDataToGetSRequestors, "exb", desc="Send data from cache to all GetS IDs with bypass") {
+    assert(is_valid(tbe));
+    assert(tbe.L1_GetS_IDs.count() == 1);
+    peek(responseL2Network_in, ResponseMsg) {
+      enqueue(responseL2Network_out, ResponseMsg, to_l1_latency) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:DATA_EXCLUSIVE;
+        out_msg.Sender := machineID;
+        out_msg.Destination := tbe.L1_GetS_IDs;  // internal nodes
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
     }
   }
 
@@ -603,6 +656,20 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
       DPRINTF(RubySlicc, "Address: %#x, Destination: %s, DataBlock: %s\n",
               out_msg.addr, out_msg.Destination, out_msg.DataBlk);
       out_msg.MessageSize := MessageSizeType:Response_Data;
+    }
+  }
+
+  action(eeb_sendDataToGetXRequestor, "eeb", desc="Send data from cache to GetX ID with bypass") {
+    assert(is_valid(tbe));
+    peek(responseL2Network_in, ResponseMsg) {
+      enqueue(responseL2Network_out, ResponseMsg, to_l1_latency) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:DATA;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(tbe.L1_GetX_ID);
+        out_msg.DataBlk := in_msg.DataBlk;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+      }
     }
   }
 
@@ -654,6 +721,15 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
     tbe.DataBlk := cache_entry.DataBlk;
     tbe.Dirty := cache_entry.Dirty;
     tbe.pendingAcks := cache_entry.Sharers.count();
+  }
+
+  action(ib_allocateTBE, "ib", desc="Allocate TBE for request with bypass") {
+    check_allocate(TBEs);
+    TBEs.allocate(address);
+    set_tbe(TBEs[address]);
+    tbe.L1_GetS_IDs.clear();
+    tbe.Dirty := false;
+    tbe.pendingAcks := 0;
   }
 
   action(s_deallocateTBE, "s", desc="Deallocate external TBE") {
@@ -923,21 +999,21 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
   // BASE STATE - I
 
   // Transitions from I (Idle)
-  transition({NP, IS, ISS, IM, SS, M, M_I, I_I, S_I, MT_IB, MT_SB}, L1_PUTX) {
+  transition({NP, IS, ISS, IM, IS_B, ISS_B, IM_B, SS, M, M_I, I_I, S_I, MT_IB, MT_SB}, L1_PUTX) {
     t_sendWBAck;
     jj_popL1RequestQueue;
   }
 
-  transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, MT_IB, MT_SB}, L1_PUTX_old) {
+  transition({NP, SS, M, MT, M_I, I_I, S_I, IS, ISS, IM, IS_B, ISS_B, IM_B, MT_IB, MT_SB}, L1_PUTX_old) {
     t_sendWBAck;
     jj_popL1RequestQueue;
   }
 
-  transition({IM, IS, ISS, SS_MB, MT_MB, MT_IIB, MT_IB, MT_SB}, {L2_Replacement, L2_Replacement_clean, Flush, Flush_Data, Flush_NP, Flush_Clean, Flush_NP_Clean, Flush_Data_Clean}) {
+  transition({IM, IS, ISS, IM_B, IS_B, ISS_B, SS_MB, MT_MB, MT_IIB, MT_IB, MT_SB}, {L2_Replacement, L2_Replacement_clean, Flush, Flush_Data, Flush_NP, Flush_Clean, Flush_NP_Clean, Flush_Data_Clean}) {
     zz_stallAndWaitL1RequestQueue;
   }
 
-  transition({IM, IS, ISS, SS_MB, MT_MB, MT_IIB, MT_IB, MT_SB}, MEM_Inv) {
+  transition({IM, IS, ISS, IM_B, IS_B, ISS_B, SS_MB, MT_MB, MT_IIB, MT_IB, MT_SB}, MEM_Inv) {
     zn_recycleResponseNetwork;
   }
 
@@ -987,6 +1063,30 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
     jj_popL1RequestQueue;
   }
 
+  // bypass transitions
+  transition(NP, L1_GETS_Bypass,  ISS_B) {
+    ib_allocateTBE;
+    ss_recordGetSL1ID;
+    a_issueFetchToMemory;
+    uu_profileMiss;
+    jj_popL1RequestQueue;
+  }
+
+  transition(NP, L1_GET_INSTR_Bypass, IS_B) {
+    ib_allocateTBE;
+    ss_recordGetSL1ID;
+    a_issueFetchToMemory;
+    uu_profileMiss;
+    jj_popL1RequestQueue;
+  }
+
+  transition(NP, L1_GETX_Bypass, IM_B) {
+    ib_allocateTBE;
+    xx_recordGetXL1ID;
+    a_issueFetchToMemory;
+    uu_profileMiss;
+    jj_popL1RequestQueue;
+  }
 
   // transitions from IS/IM
 
@@ -1012,6 +1112,28 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
     o_popIncomingResponseQueue;
   }
 
+  // transitions from IS/IM with bypass
+  transition(ISS_B, Mem_Data, NP) {
+    exb_sendExclusiveDataToGetSRequestors;
+    s_deallocateTBE;
+    o_popIncomingResponseQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(IS_B, Mem_Data, NP) {
+    eb_sendDataToGetSRequestors;
+    s_deallocateTBE;
+    o_popIncomingResponseQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition(IM_B, Mem_Data, NP) {
+    eeb_sendDataToGetXRequestor;
+    s_deallocateTBE;
+    o_popIncomingResponseQueue;
+    kd_wakeUpDependents;
+  }
+
   transition({IS, ISS}, {L1_GETS, L1_GET_INSTR}, IS) {
     nn_addSharer;
     ss_recordGetSL1ID;
@@ -1024,6 +1146,21 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
   }
 
   transition(IM, {L1_GETX, L1_GETS, L1_GET_INSTR}) {
+    zz_stallAndWaitL1RequestQueue;
+  }
+
+  // bypass state stall handlers
+  transition({IS_B, ISS_B}, {L1_GETS, L1_GET_INSTR}, IS_B) {
+    ss_recordGetSL1ID;
+    uu_profileMiss;
+    jj_popL1RequestQueue;
+  }
+
+  transition({IS_B, ISS_B}, L1_GETX) {
+    zz_stallAndWaitL1RequestQueue;
+  }
+
+  transition(IM_B, {L1_GETX, L1_GETS, L1_GET_INSTR}) {
     zz_stallAndWaitL1RequestQueue;
   }
 

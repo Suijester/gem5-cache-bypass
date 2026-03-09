@@ -86,7 +86,7 @@ CacheMemory::CacheMemory(const Params &p)
     // streaming bypass initializer
     m_enable_bypass = p.enable_bypass;
     m_bypass_threshold = p.bypass_threshold;
-    m_lass_miss_addr = 0;
+    m_last_miss_addr = 0;
     m_sequential_miss_count = 0;
     m_streaming_detected = false;
 }
