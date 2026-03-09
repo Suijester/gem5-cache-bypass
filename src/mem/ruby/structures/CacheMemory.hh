@@ -91,6 +91,9 @@ class CacheMemory : public SimObject
     //   b) an unused line in the same cache "way"
     bool cacheAvail(Addr address) const;
 
+    // Returns true if there is detected streaming on the application
+    bool shouldBypass(Addr address);
+
     // Returns a NULL entry that acts as a placeholder for invalid lines
     AbstractCacheEntry*
     getNullEntry() const
@@ -219,6 +222,13 @@ class CacheMemory : public SimObject
     {
         return ruby::makeLineAddress(addr, floorLog2(m_block_size));
     }
+
+    // streaming bypass variables
+    bool m_enable_bypass;
+    int m_bypass_threshold;
+    Addr m_last_miss_addr;
+    int m_sequential_miss_count;
+    bool m_streaming_detected;
 
     private:
       struct CacheMemoryStats : public statistics::Group

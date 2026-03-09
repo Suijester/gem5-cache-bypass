@@ -44,6 +44,10 @@ class RubyCache(SimObject):
         "0B", "block size in bytes. 0 means default RubyBlockSize"
     )
 
+    # streaming bypass cache inputs
+    enable_bypass = Param.Bool(False, "enable streaming bypass in cache")
+    bypass_threshold = Param.Int(4, "number of sequential misses to enable bypass")
+
     # Atomic parameters only applicable to GPU atomics
     # Zero atomic latency corresponds to instantanous atomic ALU operations
     atomicLatency = Param.Cycles(0, "Cycles for an atomic ALU operation")

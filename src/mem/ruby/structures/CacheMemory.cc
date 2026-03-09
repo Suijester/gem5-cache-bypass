@@ -82,6 +82,13 @@ CacheMemory::CacheMemory(const Params &p)
     m_block_size = p.block_size;  // may be 0 at this point. Updated in init()
     m_use_occupancy = dynamic_cast<replacement_policy::WeightedLRU*>(
                                     m_replacementPolicy_ptr) ? true : false;
+    
+    // streaming bypass initializer
+    m_enable_bypass = p.enable_bypass;
+    m_bypass_threshold = p.bypass_threshold;
+    m_lass_miss_addr = 0;
+    m_sequential_miss_count = 0;
+    m_streaming_detected = false;
 }
 
 void
@@ -285,6 +292,32 @@ CacheMemory::cacheAvail(Addr address) const
         }
     }
     return false;
+}
+
+// miss-invoked bypass detector
+bool
+CacheMemory::shouldBypass(Addr address)
+{
+    if (!m_enable_bypass) return false;
+    address = makeLineAddress(address);
+
+    if (m_last_miss_addr != 0 &&
+        (address == m_last_miss_addr + m_block_size ||
+         address == m_last_miss_addr - m_block_size)) {
+        m_sequential_miss_count++;
+    } else {
+        m_sequential_miss_count = 0;
+        m_streaming_detected = false;
+    }
+
+    m_last_miss_addr = address;
+
+    if (m_sequential_miss_count >= m_bypass_threshold) m_streaming_detected = true;
+
+    DPRINTF(RubyCache, "shouldBypass addr: %#x seq_count: %d streaming: %d\n",
+            address, m_sequential_miss_count, m_streaming_detected);
+
+    return m_streaming_detected;
 }
 
 AbstractCacheEntry*
