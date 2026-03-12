@@ -246,6 +246,8 @@ class CacheMemory : public SimObject
           statistics::Scalar numAtomicALUOperations;
           statistics::Scalar numAtomicALUArrayStalls;
 
+          statistics::Scalar numCacheBypasses;
+
           // hardware transactional memory
           statistics::Histogram htmTransCommitReadSet;
           statistics::Histogram htmTransCommitWriteSet;

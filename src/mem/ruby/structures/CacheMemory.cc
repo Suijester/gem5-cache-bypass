@@ -301,9 +301,10 @@ CacheMemory::shouldBypass(Addr address)
     if (!m_enable_bypass) return false;
     address = makeLineAddress(address);
 
+    Addr bank_stride = (Addr)1 << m_start_index_bit;
     if (m_last_miss_addr != 0 &&
-        (address == m_last_miss_addr + m_block_size ||
-         address == m_last_miss_addr - m_block_size)) {
+        (address == m_last_miss_addr + bank_stride ||
+        address == m_last_miss_addr - bank_stride)) {
         m_sequential_miss_count++;
     } else {
         m_sequential_miss_count = 0;
@@ -312,8 +313,11 @@ CacheMemory::shouldBypass(Addr address)
 
     m_last_miss_addr = address;
 
-    if (m_sequential_miss_count >= m_bypass_threshold) m_streaming_detected = true;
-
+    if (m_sequential_miss_count >= m_bypass_threshold) {
+        m_streaming_detected = true;
+        cacheMemoryStats.numCacheBypasses++;
+    }
+    
     DPRINTF(RubyCache, "shouldBypass addr: %#x seq_count: %d streaming: %d\n",
             address, m_sequential_miss_count, m_streaming_detected);
 
@@ -589,6 +593,7 @@ CacheMemoryStats::CacheMemoryStats(statistics::Group *parent)
       ADD_STAT(numDataArrayStalls, "Number of stalls caused by data array"),
       ADD_STAT(numAtomicALUOperations, "Number of atomic ALU operations"),
       ADD_STAT(numAtomicALUArrayStalls, "Number of stalls caused by atomic ALU array"),
+      ADD_STAT(numCacheBypasses, "Number of cache bypasses"),
       ADD_STAT(htmTransCommitReadSet, "Read set size of a committed "
                                       "transaction"),
       ADD_STAT(htmTransCommitWriteSet, "Write set size of a committed "
@@ -629,6 +634,9 @@ CacheMemoryStats::CacheMemoryStats(statistics::Group *parent)
 
     numAtomicALUArrayStalls
         .flags(statistics::nozero);
+    
+    numCacheBypasses
+        .flags(statistics::none);
 
     htmTransCommitReadSet
         .init(8)

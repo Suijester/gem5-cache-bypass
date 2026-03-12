@@ -432,18 +432,16 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
                                                 in_msg.Requestor, cache_entry),
                   in_msg.addr, cache_entry, tbe);
         } else { // BYPASS ENABLED
-          if (L2cache.shouldBypass(in_msg.addr)) {
+          if ((in_msg.Type == CoherenceRequestType:GETS ||
+               in_msg.Type == CoherenceRequestType:GET_INSTR ||
+               in_msg.Type == CoherenceRequestType:GETX) &&
+               L2cache.shouldBypass(in_msg.addr)) {
             if (in_msg.Type == CoherenceRequestType:GETS) {
               trigger(Event:L1_GETS_Bypass, in_msg.addr, cache_entry, tbe);
             } else if (in_msg.Type == CoherenceRequestType:GET_INSTR) {
               trigger(Event:L1_GET_INSTR_Bypass, in_msg.addr, cache_entry, tbe);
             } else if (in_msg.Type == CoherenceRequestType:GETX) {
               trigger(Event:L1_GETX_Bypass, in_msg.addr, cache_entry, tbe);
-            } else {
-              // can't bypass the request
-              trigger(L1Cache_request_type_to_event(in_msg.Type, in_msg.addr,
-                                                  in_msg.Requestor, cache_entry),
-                    in_msg.addr, cache_entry, tbe);
             }
           } else if (L2cache.cacheAvail(in_msg.addr)) {
             // L2 does't have the line, but we have space for it in the L2
@@ -468,6 +466,16 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
 
 
   // ACTIONS
+
+  action(nb_sendBypassCleanReplacement, "nb", desc="Send ACK to directory to release M state after bypass (triggers CleanReplacement M->I)") {
+    enqueue(responseL2Network_out, ResponseMsg, l2_response_latency) {
+      out_msg.addr := address;
+      out_msg.Type := CoherenceResponseType:ACK;
+      out_msg.Sender := machineID;
+      out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+      out_msg.MessageSize := MessageSizeType:Response_Control;
+    }
+  }
 
   action(a_issueFetchToMemory, "a", desc="fetch data from memory") {
     peek(L1RequestL2Network_in, RequestMsg) {
@@ -1115,6 +1123,7 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
   // transitions from IS/IM with bypass
   transition(ISS_B, Mem_Data, NP) {
     exb_sendExclusiveDataToGetSRequestors;
+    nb_sendBypassCleanReplacement;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
@@ -1122,6 +1131,7 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
 
   transition(IS_B, Mem_Data, NP) {
     eb_sendDataToGetSRequestors;
+    nb_sendBypassCleanReplacement;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
@@ -1129,9 +1139,36 @@ machine(MachineType:L2Cache, "MESI Directory L2 Cache CMP")
 
   transition(IM_B, Mem_Data, NP) {
     eeb_sendDataToGetXRequestor;
+    nb_sendBypassCleanReplacement;
     s_deallocateTBE;
     o_popIncomingResponseQueue;
     kd_wakeUpDependents;
+  }
+
+  transition(NP, Mem_Ack) {
+    o_popIncomingResponseQueue;
+  }
+
+  transition({ISS_B, IS_B, IM_B}, Mem_Ack) {
+    o_popIncomingResponseQueue;
+  }
+
+  transition(NP, Exclusive_Unblock) {
+    k_popUnblockQueue;
+    kd_wakeUpDependents;
+  }
+  
+  transition(NP, Unblock) {
+    k_popUnblockQueue;
+    kd_wakeUpDependents;
+  }
+
+  transition({ISS_B, IM_B}, Exclusive_Unblock) {
+    k_popUnblockQueue;
+  }
+
+  transition(IS_B, Unblock) {
+    k_popUnblockQueue;
   }
 
   transition({IS, ISS}, {L1_GETS, L1_GET_INSTR}, IS) {

@@ -50,6 +50,25 @@ class L2Cache(RubyCache):
 
 
 def define_options(parser):
+    parser.add_argument( 
+        "--bypass-enabled", 
+        action="store_true", 
+        default=False,
+        help="Enable cache bypassing for L2 cache" 
+    )
+    parser.add_argument( 
+        "--bypass-threshold", 
+        type=int, 
+        default=4,
+        help="Set the bypass threshold for L2 cache (in bytes)" 
+    )
+    parser.add_argument(
+        "--replacement-policy",
+        type=str,
+        default="LRURP",
+        help="Replacement policy for the caches (LRURP, TreePLRURP, NRURP, BRRIPRP, NMRURP)",
+    )
+
     return
 
 
@@ -92,6 +111,7 @@ def create_system(
             assoc=options.l1d_assoc,
             start_index_bit=block_size_bits,
             is_icache=False,
+            replacement_policy=options.replacement_policy, # set replacement policy for L1 cache
         )
 
         prefetcher = RubyPrefetcher(block_size=options.cacheline_size)
@@ -151,6 +171,9 @@ def create_system(
             size=options.l2_size,
             assoc=options.l2_assoc,
             start_index_bit=l2_index_start,
+            enable_bypass=options.bypass_enabled,  # enable bypass for L2 cache
+            bypass_threshold=options.bypass_threshold,  # set bypass threshold
+            replacement_policy=options.replacement_policy, # set replacement policy for L2 cache
         )
 
         l2_cntrl = MESI_Two_Level_L2Cache_Controller(
